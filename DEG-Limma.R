@@ -18,6 +18,13 @@ library("dplyr")
 library("WGCNA")
 
 # FUNCTIONS
+# Project 
+project<-function(){
+  path=paste(getwd(),"/",label,"/",sep="")
+  system(paste("mkdir -p ", path,sep=""))
+  cat(paste("All files will be saved under folder:", path),"\n")
+  return(path)
+}
 # Filter
 filter<-function(filter="standard",data,min_group=3){
   if(filter == "standard"){
@@ -34,6 +41,14 @@ filter<-function(filter="standard",data,min_group=3){
     stop("At the moment only bin/standard are supported")
   }
   return(data)
+}
+
+Sara_DGE_limma <- function(top, pvalue = 0.05 , logFC = 1){
+  cat(paste("Number of genes before filter: ", nrow(top),sep=""),"\n")
+  data <- top[top$P.Value <= pvalue & abs(top$logFC) >= logFC,]
+  cat(paste("Number of genes after filter: ", nrow(data),sep=""),"\n")
+  return (data)
+  
 }
 
 # DATA
@@ -69,8 +84,6 @@ group=targets$Diagnosis_estandarizada
 # DELETE OUTLIERS SAMPLES
 # Up_G027 and Up_G043
 rawdata <- select(rawdata, -Up_G027, -Up_G043)
-which(targets$Muestras_Utero == "Up_G043")
-which(targets$Muestras_Utero == "Up_G027")
 targets = targets[-c(which(targets$Muestras_Utero == "Up_G027"), which(targets$Muestras_Utero == "Up_G043")),]
 rownames(targets) = c(1:nrow(targets))
 
@@ -93,6 +106,10 @@ nrow(results_counts)
 all(rownames(rawdata) == results_counts$Gene)
 
 # ANALYSIS
+# Path
+label<-("Utero_test2")
+path<-project()
+
 # Design Matrix
 design <- model.matrix(~0+group)
 
@@ -148,3 +165,58 @@ rpkm8 <-rpkm(dgenorm8,normalized.lib.sizes=TRUE)
 rpkm2 <-rpkm(dgenorm2,normalized.lib.sizes=TRUE)
 rpkm11<-rpkm(dgenorm11,normalized.lib.sizes=TRUE)
 rpkm10<-rpkm(dgenorm10,normalized.lib.sizes=TRUE)
+
+# Transform count data to log2CPM estimate the mean-variance relationship and use this to compute appropriate observation-level weights. 
+# The data are then ready for linear modelling (normalize="quantile")
+v8 <- voom(dgenorm8, design, plot = TRUE)
+v2 <- voom(dgenorm2, design, plot = TRUE)
+v11 <- voom(dgenorm11, design, plot = TRUE)
+v10 <- voom(dgenorm10, design, plot = TRUE)
+
+# lmFit (mean counts matrix per condition). Fit linear model for each gene given a series of arrays
+fit8 <- lmFit(v8, design)
+fit2 <- lmFit(v2, design)
+fit11 <- lmFit(v11, design)
+fit10 <- lmFit(v10, design)
+
+# contrast = all groups vs all groups
+contrast <- makeContrasts(
+  groupEndometriosis      - groupFactor_masculino,
+  groupRIF                - groupFactor_masculino,
+  groupSin_causa_aparente - groupFactor_masculino,
+  groupUtero_doble        - groupFactor_masculino,
+  groupRIF                - groupEndometriosis,
+  groupSin_causa_aparente - groupEndometriosis,
+  groupUtero_doble        - groupEndometriosis,
+  groupSin_causa_aparente - groupRIF,
+  groupUtero_doble        - groupRIF,
+  groupUtero_doble        - groupSin_causa_aparente,
+  levels=design)
+
+# contrasts.fit: Compute Contrasts from Linear Model Fit
+# Given a linear model fit to microarray data, compute estimated coefficients and standard errors for a given set of contrasts.
+contrast_fit8 <- contrasts.fit(fit8, contrast)
+contrast_fit2 <- contrasts.fit(fit2, contrast)
+contrast_fit11 <- contrasts.fit(fit11, contrast)
+contrast_fit10 <- contrasts.fit(fit10, contrast)
+
+# eBayes: Empirical Bayes Statistics for Differential Expression
+# Given a linear model fit from lmFit, compute moderated t-statistics, moderated F-statistic, 
+# and log-odds of differential expression by empirical Bayes moderation of the standard errors towards a global value.
+
+contrast_result8 <- eBayes(contrast_fit8)
+contrast_result2 <- eBayes(contrast_fit2)
+contrast_result11 <- eBayes(contrast_fit11)
+contrast_result10 <- eBayes(contrast_fit10)
+
+# tables by comparisons
+Endometriosis_FactorMasculino    <- topTable(contrast_result8, coef = 1, sort.by = "P", number = Inf)
+RIF_FactorMasculino              <- topTable(contrast_result8, coef = 2, sort.by = "P", number = Inf)
+SinCausa_FactorMasculino         <- topTable(contrast_result8, coef = 3, sort.by = "P", number = Inf)
+UteroDoble_FactorMasculino       <- topTable(contrast_result2, coef = 4, sort.by = "P", number = Inf)
+RIF_Endometriosis                <- topTable(contrast_result11, coef = 5, sort.by = "P", number = Inf)
+SinCausa_Endometriosis           <- topTable(contrast_result10, coef = 6, sort.by = "P", number = Inf)
+UteroDoble_Endometriosis         <- topTable(contrast_result2, coef = 7, sort.by = "P", number = Inf)
+SinCausa_RIF                     <- topTable(contrast_result10, coef = 8, sort.by = "P", number = Inf)
+UteroDoble_RIF                   <- topTable(contrast_result2, coef = 9, sort.by = "P", number = Inf)
+UteroDoble_SinCausa              <- topTable(contrast_result2, coef = 10, sort.by = "P", number = Inf)
